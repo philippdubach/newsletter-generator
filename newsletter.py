@@ -508,11 +508,11 @@ def generate_newsletter(md_path: Path, output_path: Path = None) -> Path:
                                         <span style="color: #999;">&nbsp;|&nbsp;</span>
                                         <a href="https://philippdubach.com/projects/?ref={ref}" style="color: #666; text-decoration: none;">Projects</a>
                                         <span style="color: #999;">&nbsp;|&nbsp;</span>
-                                        <a href="https://philippdubach.com/posts/?ref={ref}" style="color: #666; text-decoration: none;">Research</a>
+                                        <a href="https://philippdubach.com/research/?ref={ref}" style="color: #666; text-decoration: none;">Research</a>
                                         <span style="color: #999;">&nbsp;|&nbsp;</span>
-                                        <a href="https://github.com/philippdubach" style="color: #666; text-decoration: none;">GitHub</a>
+                                        <a href="https://github.com/philippdubach?ref={ref}" style="color: #666; text-decoration: none;">GitHub</a>
                                         <span style="color: #999;">&nbsp;|&nbsp;</span>
-                                        <a href="https://linkedin.com/in/philippdubach" style="color: #666; text-decoration: none;">LinkedIn</a>
+                                        <a href="https://www.linkedin.com/in/philippdubach/?ref={ref}" style="color: #666; text-decoration: none;">LinkedIn</a>
                                     </td>
                                 </tr>
                                 <tr>
