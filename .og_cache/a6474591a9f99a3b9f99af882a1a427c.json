@@ -1,0 +1,7 @@
+{
+  "url": "https://github.com/philippdubach/hn-archiver",
+  "title": "GitHub - philippdubach/hn-archiver: A HackerNews archiving system built on Cloudflare Workers. Captures posts and comments in real-time, tracks how they change over time, classifies content with AI, and supports semantic similarity search using vector embeddings.",
+  "description": "A HackerNews archiving system built on Cloudflare Workers. Captures posts and comments in real-time, tracks how they change over time, classifies content with AI, and supports semantic similarity s...",
+  "image": "https://opengraph.githubassets.com/54719f109fba30f68728a9ea5facf0f82a74e1b431dd6cfce2f1cf08c892f172/philippdubach/hn-archiver",
+  "site_name": "GitHub"
+}

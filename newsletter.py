@@ -138,6 +138,37 @@ def add_ref_param(url: str, ref: str) -> str:
     return urlunparse(parsed._replace(query=new_query))
 
 
+def optimize_image_url(image_url: str, width: int = 240, quality: int = 80) -> str:
+    """
+    Optimize image URL using Cloudflare CDN for static.philippdubach.com images.
+    For email, we use 240px width (2x the display size of 120px for retina).
+    """
+    if not image_url:
+        return image_url
+    
+    # Only optimize images from static.philippdubach.com
+    if "static.philippdubach.com" not in image_url:
+        return image_url
+    
+    # If already optimized, return as-is
+    if "/cdn-cgi/image/" in image_url:
+        return image_url
+    
+    # Extract the path from the URL
+    parsed = urlparse(image_url)
+    path = parsed.path
+    
+    # Remove leading slash if present for CDN path
+    if path.startswith("/"):
+        path = path[1:]
+    
+    # Build optimized URL using Cloudflare's image optimization
+    base_url = "https://static.philippdubach.com"
+    optimized_url = f"{base_url}/cdn-cgi/image/width={width},quality={quality},format=webp/{path}"
+    
+    return optimized_url
+
+
 def parse_frontmatter(content: str) -> tuple[dict, str]:
     """Parse YAML-like frontmatter from markdown content."""
     frontmatter = {}
@@ -233,6 +264,10 @@ def render_card(og_data: dict, ref: str, is_first: bool = False) -> str:
     description = og_data["description"]
     image = og_data["image"]
     site_name = og_data["site_name"]
+    
+    # Optimize image URL if from static.philippdubach.com
+    if image:
+        image = optimize_image_url(image, width=240, quality=80)
     
     # Truncate description
     if len(description) > 150:
@@ -443,7 +478,8 @@ def generate_newsletter(md_path: Path, output_path: Path = None) -> Path:
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <title>{date_display}: {title}</title>
     <!--[if mso]>
     <noscript>
@@ -454,16 +490,48 @@ def generate_newsletter(md_path: Path, output_path: Path = None) -> Path:
         </xml>
     </noscript>
     <![endif]-->
+    <style type="text/css">
+        /* Prevent iOS auto-zoom */
+        @media screen and (max-width: 600px) {{
+            table[class="wrapper"] {{
+                width: 100% !important;
+                max-width: 100% !important;
+            }}
+            td[style*="padding: 20px"] {{
+                padding: 15px !important;
+            }}
+            td[style*="padding: 24px"] {{
+                padding: 20px 15px !important;
+            }}
+        }}
+        /* Prevent Gmail from adding spacing */
+        .ExternalClass {{
+            width: 100%;
+        }}
+        .ExternalClass, .ExternalClass p, .ExternalClass span, .ExternalClass font, .ExternalClass td, .ExternalClass div {{
+            line-height: 100%;
+        }}
+        /* Prevent auto-zoom on iOS */
+        input, select, textarea {{
+            font-size: 16px !important;
+        }}
+    </style>
 </head>
-<body style="margin: 0; padding: 0; background-color: #ffffff; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;">
-    <table cellpadding="0" cellspacing="0" border="0" width="100%" style="background-color: #ffffff;">
+<body style="margin: 0; padding: 0; background-color: #ffffff; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%;">
+    <!-- Wrapper table for centering -->
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background-color: #ffffff; margin: 0; padding: 0;">
         <tr>
-            <td align="center" style="padding: 20px;">
-                <table cellpadding="0" cellspacing="0" border="0" width="600" style="max-width: 600px;">
+            <td align="center" style="padding: 0; margin: 0;">
+                <!--[if mso]>
+                <table cellpadding="0" cellspacing="0" border="0" width="600">
+                <tr>
+                <td>
+                <![endif]-->
+                <table class="wrapper" role="presentation" cellpadding="0" cellspacing="0" border="0" width="600" style="max-width: 600px; width: 600px; margin: 0 auto; background-color: #ffffff;">
                     <!-- View in Browser -->
                     <tr>
-                        <td align="center" style="padding: 0 0 16px 0;">
-                            <a href="https://philippdubach.com/newsletter/{date}/?ref={ref}" style="font-size: 12px; color: #999; text-decoration: none;">
+                        <td align="center" style="padding: 20px 20px 16px 20px;">
+                            <a href="https://static.philippdubach.com/newsletter/newsletter-{date}.html" style="font-size: 12px; color: #999; text-decoration: none;">
                                 View in Web Browser
                             </a>
                         </td>
@@ -471,7 +539,7 @@ def generate_newsletter(md_path: Path, output_path: Path = None) -> Path:
                     
                     <!-- Header -->
                     <tr>
-                        <td style="padding: 0 0 20px 0; border-bottom: 1px solid #e9ecef;">
+                        <td style="padding: 0 20px 20px 20px; border-bottom: 1px solid #e9ecef;">
                             <a href="https://philippdubach.com?ref={ref}" style="text-decoration: none; display: inline-block;">
                                 <img src="https://philippdubach.com/icons/favicon-96x96.png" alt="" width="20" height="20" 
                                      style="display: inline-block; width: 20px; height: 20px; vertical-align: middle; margin-right: 6px; border-radius: 4px;">
@@ -485,7 +553,7 @@ def generate_newsletter(md_path: Path, output_path: Path = None) -> Path:
                     
                     <!-- Content -->
                     <tr>
-                        <td style="padding-top: 24px;">
+                        <td style="padding: 24px 20px 0 20px;">
                             <table cellpadding="0" cellspacing="0" border="0" width="100%">
                                 {body_content}
                             </table>
@@ -494,7 +562,7 @@ def generate_newsletter(md_path: Path, output_path: Path = None) -> Path:
                     
                     <!-- Footer -->
                     <tr>
-                        <td style="padding: 24px 0 0 0; border-top: 1px solid #e9ecef;">
+                        <td style="padding: 24px 20px 20px 20px; border-top: 1px solid #e9ecef;">
                             <table cellpadding="0" cellspacing="0" border="0" width="100%">
                                 <tr>
                                     <td align="center" style="padding: 12px 0 6px 0; font-size: 13px; color: #666; line-height: 1.5;">
@@ -511,19 +579,22 @@ def generate_newsletter(md_path: Path, output_path: Path = None) -> Path:
                                         <a href="https://philippdubach.com/research/?ref={ref}" style="color: #666; text-decoration: none;">Research</a>
                                         <span style="color: #999;">&nbsp;|&nbsp;</span>
                                         <a href="https://github.com/philippdubach?ref={ref}" style="color: #666; text-decoration: none;">GitHub</a>
-                                        <span style="color: #999;">&nbsp;|&nbsp;</span>
-                                        <a href="https://www.linkedin.com/in/philippdubach/?ref={ref}" style="color: #666; text-decoration: none;">LinkedIn</a>
                                     </td>
                                 </tr>
                                 <tr>
                                     <td align="center" style="padding: 6px 0 0 0; font-size: 11px; color: #999;">
-                                        to unsubscribe please just reply to this email
+                                        to unsubscribe please reply to this email
                                     </td>
                                 </tr>
                             </table>
                         </td>
                     </tr>
                 </table>
+                <!--[if mso]>
+                </td>
+                </tr>
+                </table>
+                <![endif]-->
             </td>
         </tr>
     </table>
