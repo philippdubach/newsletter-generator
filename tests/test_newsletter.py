@@ -98,8 +98,8 @@ class TestParseLinkList:
         urls = parse_link_list(content)
         
         assert len(urls) == 2
-        assert urls[0] == "https://example.com/one"
-        assert urls[1] == "https://example.com/two"
+        assert urls[0]["url"] == "https://example.com/one"
+        assert urls[1]["url"] == "https://example.com/two"
 
     def test_markdown_links(self):
         content = """- [Title](https://example.com/one)
@@ -108,7 +108,8 @@ class TestParseLinkList:
         urls = parse_link_list(content)
         
         assert len(urls) == 2
-        assert urls[0] == "https://example.com/one"
+        assert urls[0]["url"] == "https://example.com/one"
+        assert urls[0]["custom_title"] == "Title"
 
     def test_mixed_links(self):
         content = """- https://example.com/bare
@@ -117,10 +118,28 @@ class TestParseLinkList:
         urls = parse_link_list(content)
         
         assert len(urls) == 2
+        assert urls[0]["url"] == "https://example.com/bare"
+        assert urls[0]["custom_title"] == ""
+        assert urls[1]["url"] == "https://example.com/markdown"
+        assert urls[1]["custom_title"] == "Markdown"
 
     def test_empty_content(self):
         urls = parse_link_list("")
         assert urls == []
+    
+    def test_custom_description(self):
+        content = """- https://example.com/bare - Custom desc
+- [Title](https://example.com/md) - Another desc"""
+        
+        urls = parse_link_list(content)
+        
+        assert len(urls) == 2
+        assert urls[0]["url"] == "https://example.com/bare"
+        assert urls[0]["custom_title"] == ""
+        assert urls[0]["custom_description"] == "Custom desc"
+        assert urls[1]["url"] == "https://example.com/md"
+        assert urls[1]["custom_title"] == "Title"
+        assert urls[1]["custom_description"] == "Another desc"
 
 
 class TestParseReadingList:
@@ -150,6 +169,15 @@ class TestParseReadingList:
         
         assert len(items) == 1
         assert items[0]["url"] == "https://example.com/bare"
+
+    def test_description_with_unicode_dash(self):
+        # Some editors use unicode dash characters.
+        content = "- [Prompting People](https://example.com) – Uncomfortably relatable"
+        items = parse_reading_list(content)
+
+        assert len(items) == 1
+        assert items[0]["title"] == "Prompting People"
+        assert items[0]["description"] == "Uncomfortably relatable"
 
 
 class TestAddRefParam:

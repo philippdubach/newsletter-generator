@@ -22,17 +22,20 @@ pip install -r requirements.txt
 
 ## Usage
 
-Create a markdown file following the format below and run:
+Put your markdown files in `input/` and run:
 
 ```bash
-python newsletter.py your-newsletter.md
+python newsletter.py
 ```
 
-Output goes to `output/newsletter-YYYY-MM.html`. You can also specify a custom output path:
+This picks up the most recent `newsletter-*.md` file from the input folder. You can also specify a file directly:
 
 ```bash
-python newsletter.py input.md --output custom.html
+python newsletter.py input/newsletter-2025-12.md
+python newsletter.py somefile.md --output custom.html
 ```
+
+Output goes to `output/newsletter-YYYY-MM.html`.
 
 ## Markdown format
 
@@ -77,8 +80,10 @@ pytest tests/
 newsletter-generator/
 ├── newsletter.py       # Main script
 ├── requirements.txt    # Dependencies
-├── tests/              # Test suite
+├── input/              # Markdown source files
+│   └── template.md     # Template for new newsletters
 ├── output/             # Generated HTML (gitignored)
+├── tests/              # Test suite
 └── .og_cache/          # OpenGraph cache (gitignored)
 ```
 

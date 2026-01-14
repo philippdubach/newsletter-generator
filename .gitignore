@@ -190,3 +190,13 @@ cython_debug/
 output/
 *.jpg
 *.png
+
+# Distribution - sensitive data
+distribution/subscribers.csv
+.env
+.env.*
+
+# Personal Templates
+WritingAgents/
+input/
+!template.md

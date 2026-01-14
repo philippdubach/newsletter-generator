@@ -27,6 +27,10 @@ from bs4 import BeautifulSoup
 CACHE_DIR = Path(__file__).parent / ".og_cache"
 CACHE_DIR.mkdir(exist_ok=True)
 
+# Input directory
+INPUT_DIR = Path(__file__).parent / "input"
+INPUT_DIR.mkdir(exist_ok=True)
+
 # Output directory
 OUTPUT_DIR = Path(__file__).parent / "output"
 OUTPUT_DIR.mkdir(exist_ok=True)
@@ -129,11 +133,19 @@ def fetch_opengraph(url: str) -> dict:
     return og_data
 
 
+def is_philippdubach_url(url: str) -> bool:
+    """Check if URL is for philippdubach.com or any subdomain."""
+    parsed = urlparse(url)
+    domain = parsed.netloc.lower()
+    return domain == "philippdubach.com" or domain.endswith(".philippdubach.com")
+
+
 def add_ref_param(url: str, ref: str) -> str:
-    """Add ref parameter to URL for tracking."""
+    """Add ref and campaign parameters to URL for tracking."""
     parsed = urlparse(url)
     query_params = parse_qs(parsed.query)
     query_params["ref"] = [ref]
+    query_params["campaign"] = [ref]
     new_query = urlencode(query_params, doseq=True)
     return urlunparse(parsed._replace(query=new_query))
 
@@ -209,27 +221,66 @@ def parse_sections(body: str) -> dict:
     return sections
 
 
-def parse_link_list(content: str) -> list[str]:
-    """Parse a list of URLs from markdown content."""
-    urls = []
+def parse_link_list(content: str) -> list[dict]:
+    """
+    Parse a list of URLs from markdown content.
+    Returns list of dicts with 'url', 'custom_title', and 'custom_description'.
+    
+    Supports formats:
+    - https://example.com                        → use OG title + OG description
+    - https://example.com - Custom description   → use OG title + custom description
+    - [Custom Title](https://example.com)        → use custom title + OG description
+    - [Custom Title](https://example.com) - Desc → use custom title + custom description
+    """
+    items = []
+    
+    def _strip_leading_separator(text: str) -> str:
+        # Accept common separators including various unicode dashes.
+        return re.sub(r"^[\s\u00A0]*[-–—:‑‒−‐][\s\u00A0]*", "", text).strip()
+    
     for line in content.split("\n"):
         line = line.strip()
         if line.startswith("-"):
             line = line[1:].strip()
         
-        # Check for bare URL
+        if not line:
+            continue
+        
+        custom_title = ""
+        custom_description = ""
+        
+        # Check for markdown link first: [text](url) optionally followed by - description
+        md_match = re.match(r"\[([^\]]*)\]\((https?://[^\)]+)\)", line)
+        if md_match:
+            custom_title = md_match.group(1).strip()
+            url = md_match.group(2)
+            rest = line[md_match.end():].strip()
+            custom_description = _strip_leading_separator(rest) if rest else ""
+            items.append({"url": url, "custom_title": custom_title, "custom_description": custom_description})
+            continue
+        
+        # Check for bare URL optionally followed by - description
         if line.startswith("http"):
-            urls.append(line.split()[0])  # Take just the URL part
-        # Check for markdown link
-        elif match := re.match(r"\[.*?\]\((https?://[^\)]+)\)", line):
-            urls.append(match.group(1))
+            parts = line.split(maxsplit=1)
+            url = parts[0]
+            rest = parts[1] if len(parts) > 1 else ""
+            custom_description = _strip_leading_separator(rest) if rest else ""
+            items.append({"url": url, "custom_title": "", "custom_description": custom_description})
     
-    return urls
+    return items
 
 
 def parse_reading_list(content: str) -> list[dict]:
     """Parse reading list with optional descriptions."""
     items = []
+
+    def _strip_leading_separator(text: str) -> str:
+        # Accept common separators including various unicode dashes.
+        # Examples:
+        #   "- note" / "– note" / "— note" / ": note"
+        #   " - note" (with spaces)
+        return re.sub(r"^[\s\u00A0]*[-–—:‑‒−‐][\s\u00A0]*", "", text).strip()
+
     for line in content.split("\n"):
         line = line.strip()
         if not line or not line.startswith("-"):
@@ -238,30 +289,48 @@ def parse_reading_list(content: str) -> list[dict]:
         line = line[1:].strip()
         
         # Parse markdown link with optional description
-        match = re.match(r"\[(.+?)\]\((https?://[^\)]+)\)(?:\s*[-–—:]\s*(.+))?", line)
+        match = re.match(r"\[(.+?)\]\((https?://[^\)]+)\)", line)
         if match:
-            items.append({
-                "title": match.group(1),
-                "url": match.group(2),
-                "description": match.group(3) or ""
-            })
-        # Bare URL
-        elif line.startswith("http"):
-            url = line.split()[0]
-            items.append({
-                "title": url,
-                "url": url,
-                "description": ""
-            })
+            rest = _strip_leading_separator(line[match.end():]) if len(line) > match.end() else ""
+            items.append(
+                {
+                    "title": match.group(1),
+                    "url": match.group(2),
+                    "description": rest,
+                }
+            )
+            continue
+
+        # Bare URL with optional description
+        if line.startswith("http"):
+            parts = line.split(maxsplit=1)
+            url = parts[0]
+            rest = _strip_leading_separator(parts[1]) if len(parts) > 1 else ""
+            items.append(
+                {
+                    "title": url,
+                    "url": url,
+                    "description": rest,
+                }
+            )
+            continue
     
     return items
 
 
-def render_card(og_data: dict, ref: str, is_first: bool = False) -> str:
-    """Render a LinkedIn-style link preview card with image on left."""
+def render_card(og_data: dict, ref: str, is_first: bool = False, custom_title: str = None, custom_description: str = None) -> str:
+    """Render a LinkedIn-style link preview card with image on left.
+    
+    Args:
+        og_data: OpenGraph data dict with url, title, description, image, site_name
+        ref: Reference tag for tracking
+        is_first: Whether this is the first card (no top margin)
+        custom_title: Optional custom title to override og_data title
+        custom_description: Optional custom description to override og_data description
+    """
     url = add_ref_param(og_data["url"], ref)
-    title = og_data["title"] or og_data["url"]
-    description = og_data["description"]
+    title = custom_title if custom_title else (og_data["title"] or og_data["url"])
+    description = custom_description if custom_description else og_data["description"]
     image = og_data["image"]
     site_name = og_data["site_name"]
     
@@ -276,27 +345,35 @@ def render_card(og_data: dict, ref: str, is_first: bool = False) -> str:
     # First card has no top margin
     margin_style = "margin: 0 0 12px 0;" if is_first else "margin: 12px 0;"
     
+    # Alt text for accessibility
+    alt_text = f"Preview image for: {title[:50]}" if title else "Article preview"
+    
     image_html = ""
     if image:
         image_html = f'''
-                <td width="120" style="padding: 12px 0 12px 12px; vertical-align: top;">
+                <!--[if mso]>
+                <td width="120" valign="top" style="padding: 12px 0 12px 12px;">
+                <![endif]-->
+                <!--[if !mso]><!-->
+                <td class="card-image" width="120" style="padding: 12px 0 12px 12px; vertical-align: top;">
+                <!--<![endif]-->
                     <a href="{url}" style="text-decoration: none; display: block;">
-                        <img src="{image}" alt="" width="120" 
-                             style="display: block; width: 120px; height: auto; border-radius: 4px;">
+                        <img src="{image}" alt="{alt_text}" width="120" height="auto"
+                             style="display: block; width: 120px; max-width: 100%; height: auto; border-radius: 4px; border: 0;">
                     </a>
                 </td>'''
     
     return f'''
-        <table cellpadding="0" cellspacing="0" border="0" width="100%" 
+        <table cellpadding="0" cellspacing="0" border="0" width="100%" role="presentation"
                style="{margin_style} background-color: #ffffff; border: 1px solid #e9ecef; border-radius: 8px;">
             <tr>{image_html}
-                <td style="padding: 12px 14px; vertical-align: top;">
-                    <a href="{url}" style="text-decoration: none;">
-                        <div style="font-weight: 600; font-size: 15px; line-height: 1.4; margin-bottom: 6px; color: #333;">
+                <td class="card-content" style="padding: 12px 14px; vertical-align: top;">
+                    <a href="{url}" style="text-decoration: none; display: block;">
+                        <div style="font-weight: 600; font-size: 15px; line-height: 1.4; margin-bottom: 6px; color: #333333;">
                             {title}
                         </div>
                     </a>
-                    <div style="font-size: 15px; color: #666; line-height: 1.75;">
+                    <div style="font-size: 15px; color: #666666; line-height: 1.75;">
                         {description}
                     </div>
                 </td>
@@ -331,14 +408,14 @@ def render_reading_item(item: dict, ref: str) -> str:
     
     desc_html = ""
     if description:
-        desc_html = f': <span style="color: #666;">{description}</span>'
+        desc_html = f': <span style="color: #666666;">{description}</span>'
     
     return f'''
         <tr>
-            <td style="padding: 3px 0; font-size: 14px; line-height: 1.75;">
-                <span style="color: #333; font-size: 6px; vertical-align: middle;">&#9632;</span>&nbsp;&nbsp;
+            <td style="padding: 3px 0; font-size: 14px; line-height: 1.75; color: #333333;">
+                <span style="font-size: 6px; vertical-align: middle;">&#9632;</span>&nbsp;&nbsp;
                 <a href="{url}" style="color: #007acc; text-decoration: none;">{title}</a>{desc_html}
-                <span style="color: #999; font-size: 12px;"> via {source}</span>
+                <span style="color: #999999; font-size: 12px;"> via {source}</span>
             </td>
         </tr>'''
 
@@ -348,15 +425,25 @@ def render_section_header(title: str) -> str:
     return f'''
         <tr>
             <td style="padding: 28px 0 12px 0;">
-                <div style="font-size: 15px; font-weight: 700; color: #333;">
+                <h2 style="margin: 0; font-size: 15px; font-weight: 700; color: #333333; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
                     {title}
-                </div>
+                </h2>
             </td>
         </tr>'''
 
 
-def render_text_content(text: str) -> str:
+def render_text_content(text: str, ref: str = None) -> str:
     """Render free-form text content with basic markdown support."""
+    
+    def replace_link(match):
+        """Replace markdown link, adding tracking params for philippdubach.com URLs."""
+        link_text = match.group(1)
+        url = match.group(2)
+        # Add tracking params if it's a philippdubach.com URL and ref is provided
+        if ref and not url.startswith("mailto:") and is_philippdubach_url(url):
+            url = add_ref_param(url, ref)
+        return f'<a href="{url}" style="color: #007acc; text-decoration: none;">{link_text}</a>'
+    
     # Convert markdown paragraphs to HTML
     paragraphs = text.strip().split("\n\n")
     html_parts = []
@@ -366,10 +453,10 @@ def render_text_content(text: str) -> str:
         if not para:
             continue
         
-        # Convert markdown links
+        # Convert markdown links (with tracking for philippdubach.com)
         para = re.sub(
-            r"\[(.+?)\]\((https?://[^\)]+)\)",
-            r'<a href="\2" style="color: #007acc; text-decoration: none;">\1</a>',
+            r"\[(.+?)\]\(((?:https?://|mailto:)[^\)]+)\)",
+            replace_link,
             para
         )
         
@@ -381,7 +468,7 @@ def render_text_content(text: str) -> str:
         
         html_parts.append(f'''
         <tr>
-            <td style="padding: 8px 0; font-size: 15px; line-height: 1.75; color: #333;">
+            <td style="padding: 8px 0; font-size: 15px; line-height: 1.75; color: #333333;">
                 {para}
             </td>
         </tr>''')
@@ -421,37 +508,41 @@ def generate_newsletter(md_path: Path, output_path: Path = None) -> Path:
     if greeting:
         html_sections.append(f'''
         <tr>
-            <td style="padding: 0 0 8px 0; font-size: 18px; font-weight: 600; color: #333;">
+            <td class="dark-text" style="padding: 0 0 8px 0; font-size: 18px; font-weight: 600; color: #333333;">
                 {greeting}
             </td>
         </tr>''')
     
     # Introduction
     if "introduction" in sections:
-        html_sections.append(render_text_content(sections["introduction"]))
+        html_sections.append(render_text_content(sections["introduction"], ref))
     
     # What I've been writing
     if "writing" in sections:
         print("Fetching OpenGraph data for Writing section...")
-        urls = parse_link_list(sections["writing"])
-        if urls:
+        items = parse_link_list(sections["writing"])
+        if items:
             html_sections.append(render_section_header("What I've been writing"))
             html_sections.append('<tr><td>')
-            for i, url in enumerate(urls):
-                og_data = fetch_opengraph(url)
-                html_sections.append(render_card(og_data, ref, is_first=(i == 0)))
+            for i, item in enumerate(items):
+                og_data = fetch_opengraph(item["url"])
+                custom_title = item.get("custom_title") or None
+                custom_description = item.get("custom_description") or None
+                html_sections.append(render_card(og_data, ref, is_first=(i == 0), custom_title=custom_title, custom_description=custom_description))
             html_sections.append('</td></tr>')
     
     # What I've been working on
     if "working" in sections:
         print("\nFetching OpenGraph data for Working section...")
-        urls = parse_link_list(sections["working"])
-        if urls:
+        items = parse_link_list(sections["working"])
+        if items:
             html_sections.append(render_section_header("What I've been working on"))
             html_sections.append('<tr><td>')
-            for i, url in enumerate(urls):
-                og_data = fetch_opengraph(url)
-                html_sections.append(render_card(og_data, ref, is_first=(i == 0)))
+            for i, item in enumerate(items):
+                og_data = fetch_opengraph(item["url"])
+                custom_title = item.get("custom_title") or None
+                custom_description = item.get("custom_description") or None
+                html_sections.append(render_card(og_data, ref, is_first=(i == 0), custom_title=custom_title, custom_description=custom_description))
             html_sections.append('</td></tr>')
     
     # What I've been reading
@@ -468,93 +559,126 @@ def generate_newsletter(md_path: Path, output_path: Path = None) -> Path:
     # Closing
     if "closing" in sections:
         html_sections.append('<tr><td style="padding-top: 16px;"></td></tr>')
-        html_sections.append(render_text_content(sections["closing"]))
+        html_sections.append(render_text_content(sections["closing"], ref))
     
     # Combine all sections
     body_content = "\n".join(html_sections)
     
+    # Generate preheader text from introduction (first 100 chars)
+    preheader = ""
+    if "introduction" in sections:
+        intro_text = sections["introduction"].strip()
+        # Remove markdown formatting for preheader
+        intro_text = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', intro_text)
+        intro_text = re.sub(r'\*+([^*]+)\*+', r'\1', intro_text)
+        preheader = intro_text[:150].replace('\n', ' ').strip()
+        if len(intro_text) > 150:
+            preheader += "..."
+    
     # Generate full HTML
     html = f'''<!DOCTYPE html>
-<html lang="en">
+<html lang="en" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
-    <title>{date_display}: {title}</title>
+    <meta name="x-apple-disable-message-reformatting">
+    <meta name="format-detection" content="telephone=no,address=no,email=no,date=no,url=no">
+    <meta name="color-scheme" content="light only">
+    <meta name="supported-color-schemes" content="light only">
+    <title>{title}</title>
     <!--[if mso]>
     <noscript>
         <xml>
             <o:OfficeDocumentSettings>
+                <o:AllowPNG/>
                 <o:PixelsPerInch>96</o:PixelsPerInch>
             </o:OfficeDocumentSettings>
         </xml>
     </noscript>
     <![endif]-->
     <style type="text/css">
-        /* Prevent iOS auto-zoom */
-        @media screen and (max-width: 600px) {{
-            table[class="wrapper"] {{
-                width: 100% !important;
-                max-width: 100% !important;
-            }}
-            td[style*="padding: 20px"] {{
-                padding: 15px !important;
-            }}
-            td[style*="padding: 24px"] {{
-                padding: 20px 15px !important;
-            }}
-        }}
+        /* Force light mode in all clients */
+        :root {{ color-scheme: light only; }}
+        
+        /* Reset and base styles */
+        body, table, td, a {{ -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }}
+        table, td {{ mso-table-lspace: 0pt; mso-table-rspace: 0pt; }}
+        img {{ -ms-interpolation-mode: bicubic; border: 0; height: auto; line-height: 100%; outline: none; text-decoration: none; }}
+        
         /* Prevent Gmail from adding spacing */
-        .ExternalClass {{
-            width: 100%;
+        .ExternalClass {{ width: 100%; }}
+        .ExternalClass, .ExternalClass p, .ExternalClass span, .ExternalClass font, .ExternalClass td, .ExternalClass div {{ line-height: 100%; }}
+        
+        /* Responsive styles */
+        @media screen and (max-width: 600px) {{
+            .wrapper {{ width: 100% !important; max-width: 100% !important; }}
+            .mobile-padding {{ padding-left: 16px !important; padding-right: 16px !important; }}
+            .card-content {{ padding: 10px 12px !important; }}
+            .mobile-full-width {{ width: 100% !important; }}
         }}
-        .ExternalClass, .ExternalClass p, .ExternalClass span, .ExternalClass font, .ExternalClass td, .ExternalClass div {{
-            line-height: 100%;
+        
+        /* Prevent dark mode color inversion */
+        @media (prefers-color-scheme: dark) {{
+            body, .body-wrapper, .content-wrapper, .card-wrapper {{
+                background-color: #ffffff !important;
+            }}
+            h1, h2, h3, p, td, span, div, a {{
+                color: inherit !important;
+            }}
         }}
-        /* Prevent auto-zoom on iOS */
-        input, select, textarea {{
-            font-size: 16px !important;
+        
+        /* Prevent Outlook.com dark mode */
+        [data-ogsc] body,
+        [data-ogsc] .body-wrapper,
+        [data-ogsc] .content-wrapper {{
+            background-color: #ffffff !important;
         }}
     </style>
 </head>
-<body style="margin: 0; padding: 0; background-color: #ffffff; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%;">
+<body class="body-wrapper" style="margin: 0; padding: 0; background-color: #ffffff; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%;">
+    <!-- Preheader text (hidden preview text) -->
+    <div style="display: none; max-height: 0; overflow: hidden; mso-hide: all;" aria-hidden="true">
+        {preheader}
+        &#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;
+    </div>
     <!-- Wrapper table for centering -->
-    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background-color: #ffffff; margin: 0; padding: 0;">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" class="body-wrapper" style="background-color: #ffffff; margin: 0; padding: 0;">
         <tr>
             <td align="center" style="padding: 0; margin: 0;">
                 <!--[if mso]>
-                <table cellpadding="0" cellspacing="0" border="0" width="600">
+                <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="600" align="center">
                 <tr>
                 <td>
                 <![endif]-->
-                <table class="wrapper" role="presentation" cellpadding="0" cellspacing="0" border="0" width="600" style="max-width: 600px; width: 600px; margin: 0 auto; background-color: #ffffff;">
+                <table class="wrapper content-wrapper" role="presentation" cellpadding="0" cellspacing="0" border="0" width="600" style="max-width: 600px; width: 100%; margin: 0 auto; background-color: #ffffff;">
                     <!-- View in Browser -->
                     <tr>
-                        <td align="center" style="padding: 20px 20px 16px 20px;">
-                            <a href="https://static.philippdubach.com/newsletter/newsletter-{date}.html" style="font-size: 12px; color: #999; text-decoration: none;">
-                                View in Web Browser
+                        <td class="mobile-padding" align="center" style="padding: 20px 20px 16px 20px;">
+                            <a href="https://static.philippdubach.com/newsletter/newsletter-{date}.html" style="font-size: 12px; color: #999999; text-decoration: none;">
+                                View in browser
                             </a>
                         </td>
                     </tr>
                     
                     <!-- Header -->
                     <tr>
-                        <td style="padding: 0 20px 20px 20px; border-bottom: 1px solid #e9ecef;">
-                            <a href="https://philippdubach.com?ref={ref}" style="text-decoration: none; display: inline-block;">
-                                <img src="https://philippdubach.com/icons/favicon-96x96.png" alt="" width="20" height="20" 
-                                     style="display: inline-block; width: 20px; height: 20px; vertical-align: middle; margin-right: 6px; border-radius: 4px;">
-                                <span style="font-size: 18px; font-weight: 700; color: #333; vertical-align: middle;">philippdubach</span>
+                        <td class="mobile-padding" style="padding: 0 20px 20px 20px; border-bottom: 1px solid #e9ecef;">
+                            <a href="https://philippdubach.com?ref={ref}&campaign={ref}" style="text-decoration: none; display: inline-block;">
+                                <img src="https://philippdubach.com/icons/favicon-96x96.png" alt="philippdubach.com" width="20" height="20" 
+                                     style="display: inline-block; width: 20px; height: 20px; vertical-align: middle; margin-right: 6px; border-radius: 4px; border: 0;">
+                                <span style="font-size: 18px; font-weight: 700; color: #333333; vertical-align: middle;">philippdubach</span>
                             </a>
-                            <div style="font-size: 13px; color: #666; margin-top: 6px;">
+                            <p style="margin: 6px 0 0 0; font-size: 13px; color: #666666;">
                                 {date_display}: {title}
-                            </div>
+                            </p>
                         </td>
                     </tr>
                     
                     <!-- Content -->
                     <tr>
-                        <td style="padding: 24px 20px 0 20px;">
-                            <table cellpadding="0" cellspacing="0" border="0" width="100%">
+                        <td class="mobile-padding" style="padding: 24px 20px 0 20px;">
+                            <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
                                 {body_content}
                             </table>
                         </td>
@@ -562,28 +686,30 @@ def generate_newsletter(md_path: Path, output_path: Path = None) -> Path:
                     
                     <!-- Footer -->
                     <tr>
-                        <td style="padding: 24px 20px 20px 20px; border-top: 1px solid #e9ecef;">
-                            <table cellpadding="0" cellspacing="0" border="0" width="100%">
+                        <td class="mobile-padding" style="padding: 24px 20px 20px 20px; border-top: 1px solid #e9ecef;">
+                            <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
                                 <tr>
-                                    <td align="center" style="padding: 12px 0 6px 0; font-size: 13px; color: #666; line-height: 1.5;">
+                                    <td align="center" style="padding: 12px 0 6px 0; font-size: 13px; color: #666666; line-height: 1.5;">
                                         Have feedback, comments, or ideas? I'd love to hear from you: 
                                         <a href="mailto:me@philippdubach.com" style="color: #007acc; text-decoration: none;">me@philippdubach.com</a>
                                     </td>
                                 </tr>
                                 <tr>
-                                    <td align="center" style="padding: 4px 0; font-size: 13px; color: #666;">
-                                        <a href="https://philippdubach.com?ref={ref}" style="color: #666; text-decoration: none;">Blog</a>
-                                        <span style="color: #999;">&nbsp;|&nbsp;</span>
-                                        <a href="https://philippdubach.com/projects/?ref={ref}" style="color: #666; text-decoration: none;">Projects</a>
-                                        <span style="color: #999;">&nbsp;|&nbsp;</span>
-                                        <a href="https://philippdubach.com/research/?ref={ref}" style="color: #666; text-decoration: none;">Research</a>
-                                        <span style="color: #999;">&nbsp;|&nbsp;</span>
-                                        <a href="https://github.com/philippdubach?ref={ref}" style="color: #666; text-decoration: none;">GitHub</a>
+                                    <td align="center" style="padding: 4px 0; font-size: 13px; color: #666666;">
+                                        <a href="https://philippdubach.com?ref={ref}&campaign={ref}" style="color: #666666; text-decoration: none;">Blog</a>
+                                        <span style="color: #999999;">&nbsp;|&nbsp;</span>
+                                        <a href="https://philippdubach.com/projects/?ref={ref}&campaign={ref}" style="color: #666666; text-decoration: none;">Projects</a>
+                                        <span style="color: #999999;">&nbsp;|&nbsp;</span>
+                                        <a href="https://philippdubach.com/research/?ref={ref}&campaign={ref}" style="color: #666666; text-decoration: none;">Research</a>
+                                        <span style="color: #999999;">&nbsp;|&nbsp;</span>
+                                        <a href="https://github.com/philippdubach?ref={ref}&campaign={ref}" style="color: #666666; text-decoration: none;">GitHub</a>
+                                        <span style="color: #999999;">&nbsp;|&nbsp;</span>
+                                        <a href="https://bsky.app/profile/philippdubach.com" style="color: #666666; text-decoration: none;">Bluesky</a>
                                     </td>
                                 </tr>
                                 <tr>
-                                    <td align="center" style="padding: 6px 0 0 0; font-size: 11px; color: #999;">
-                                        to unsubscribe please reply to this email
+                                    <td align="center" style="padding: 6px 0 0 0; font-size: 11px; color: #999999;">
+                                        Reply to unsubscribe
                                     </td>
                                 </tr>
                             </table>
@@ -619,7 +745,8 @@ def main():
     parser.add_argument(
         "input",
         type=Path,
-        help="Path to markdown newsletter file"
+        nargs="?",
+        help="Path to markdown newsletter file (default: looks in input/ folder)"
     )
     parser.add_argument(
         "--output", "-o",
@@ -630,9 +757,23 @@ def main():
     
     args = parser.parse_args()
     
+    # If no input specified, find the most recent .md file in input/
+    if args.input is None:
+        md_files = sorted(INPUT_DIR.glob("newsletter-*.md"), reverse=True)
+        if not md_files:
+            print(f"Error: No newsletter-*.md files found in {INPUT_DIR}")
+            sys.exit(1)
+        args.input = md_files[0]
+        print(f"Using: {args.input}")
+    
+    # Check if input exists, also try input/ folder
     if not args.input.exists():
-        print(f"Error: Input file not found: {args.input}")
-        sys.exit(1)
+        alt_path = INPUT_DIR / args.input
+        if alt_path.exists():
+            args.input = alt_path
+        else:
+            print(f"Error: Input file not found: {args.input}")
+            sys.exit(1)
     
     generate_newsletter(args.input, args.output)
 
