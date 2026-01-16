@@ -503,7 +503,16 @@ def generate_newsletter(md_path: Path, output_path: Path = None) -> Path:
     
     # Build HTML sections
     html_sections = []
-    
+
+    # Forwarded/Subscribe prompt (always shown, right-aligned, centered between top line and title)
+    html_sections.append('''
+        <tr>
+            <td align="right" style="padding: 0 0 16px 0; font-size: 13px; color: #666666;">
+                Forwarded this email? <a href="https://philippdubach.com/subscribe/" style="color: #007acc; text-decoration: underline;">Subscribe</a> here for more
+            </td>
+        </tr>
+    ''')
+
     # Greeting
     if greeting:
         html_sections.append(f'''
@@ -677,7 +686,7 @@ def generate_newsletter(md_path: Path, output_path: Path = None) -> Path:
                     
                     <!-- Content -->
                     <tr>
-                        <td class="mobile-padding" style="padding: 24px 20px 0 20px;">
+                        <td class="mobile-padding" style="padding: 16px 20px 0 20px;">
                             <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
                                 {body_content}
                             </table>
@@ -708,8 +717,8 @@ def generate_newsletter(md_path: Path, output_path: Path = None) -> Path:
                                     </td>
                                 </tr>
                                 <tr>
-                                    <td align="center" style="padding: 6px 0 0 0; font-size: 11px; color: #999999;">
-                                        Reply to unsubscribe
+                                    <td align="center" style="padding: 6px 0 0 0; font-size: 11px;">
+                                        <a href="mailto:me@philippdubach.com?subject=Unsubscribe" style="color: #999999; text-decoration: underline;">Reply to unsubscribe</a>
                                     </td>
                                 </tr>
                             </table>

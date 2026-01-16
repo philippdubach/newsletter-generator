@@ -193,6 +193,7 @@ output/
 
 # Distribution - sensitive data
 distribution/subscribers.csv
+distribution/unsubscribe_tokens.json
 .env
 .env.*
 
@@ -200,3 +201,4 @@ distribution/subscribers.csv
 WritingAgents/
 input/
 !template.md
+cloudflare-worker/
