@@ -20,6 +20,8 @@ from pathlib import Path
 from urllib.parse import urljoin, urlparse, parse_qs, urlencode, urlunparse
 import calendar
 
+import os
+
 import requests
 from bs4 import BeautifulSoup
 
@@ -41,11 +43,50 @@ REQUEST_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
 }
 
+# Link Forwarder API configuration
+LINK_FORWARDER_API_URL = "https://link.philippdubach.com/transform"
+
 
 def get_cache_path(url: str) -> Path:
     """Generate a cache file path for a URL."""
     url_hash = hashlib.md5(url.encode()).hexdigest()
     return CACHE_DIR / f"{url_hash}.json"
+
+
+def transform_links(html: str, newsletter_id: str) -> str:
+    """
+    Transform external links via Link Forwarder API.
+
+    Links to philippdubach.com and subdomains (including link.philippdubach.com)
+    are preserved by the API, making this operation idempotent.
+
+    Requires LINK_FORWARDER_API_KEY environment variable.
+    """
+    api_key = os.environ.get("LINK_FORWARDER_API_KEY")
+    if not api_key:
+        print("  Skipping: LINK_FORWARDER_API_KEY not set")
+        return html
+
+    response = requests.post(
+        LINK_FORWARDER_API_URL,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "html": html,
+            "newsletter_id": newsletter_id,
+        },
+        timeout=30,
+    )
+    response.raise_for_status()
+
+    result = response.json()
+    if not result.get("success"):
+        raise Exception(f"Link transform failed: {result.get('error')}")
+
+    print(f"  Transformed {result['links_transformed']} links ({result['links_created']} new, {result['links_reused']} reused)")
+    return result["html"]
 
 
 def fetch_opengraph(url: str) -> dict:
@@ -476,7 +517,7 @@ def render_text_content(text: str, ref: str = None) -> str:
     return "\n".join(html_parts)
 
 
-def generate_newsletter(md_path: Path, output_path: Path = None) -> Path:
+def generate_newsletter(md_path: Path, output_path: Path = None, transform_links_enabled: bool = True) -> Path:
     """Generate HTML newsletter from markdown file."""
     print(f"\n📧 Generating newsletter from {md_path.name}\n")
     
@@ -735,7 +776,16 @@ def generate_newsletter(md_path: Path, output_path: Path = None) -> Path:
     </table>
 </body>
 </html>'''
-    
+
+    # Transform external links for click tracking
+    if transform_links_enabled:
+        print("\nTransforming external links...")
+        try:
+            html = transform_links(html, ref)
+        except Exception as e:
+            print(f"  Warning: Link transformation failed: {e}")
+            print("  Continuing with untransformed links...")
+
     # Determine output path
     if output_path is None:
         output_path = OUTPUT_DIR / f"newsletter-{date}.html"
@@ -763,7 +813,12 @@ def main():
         default=None,
         help="Output HTML file path (default: output/newsletter-DATE.html)"
     )
-    
+    parser.add_argument(
+        "--no-link-transform",
+        action="store_true",
+        help="Skip external link transformation via Link Forwarder API"
+    )
+
     args = parser.parse_args()
     
     # If no input specified, find the most recent .md file in input/
@@ -784,7 +839,7 @@ def main():
             print(f"Error: Input file not found: {args.input}")
             sys.exit(1)
     
-    generate_newsletter(args.input, args.output)
+    generate_newsletter(args.input, args.output, transform_links_enabled=not args.no_link_transform)
 
 
 if __name__ == "__main__":
